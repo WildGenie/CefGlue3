@@ -42,7 +42,7 @@ def path_exists(name):
 
 def backup_file(name):
     """ Rename the file to a name that includes the current time stamp. """
-    move_file(name, name+'.'+time.strftime('%Y-%m-%d-%H-%M-%S'))
+    move_file(name, f'{name}.' + time.strftime('%Y-%m-%d-%H-%M-%S'))
 
 def copy_file(src, dst, quiet = True):
     """ Copy a file. """

@@ -22,18 +22,18 @@ def get_func_parts(func, slot, is_global = False):
     csn_name = capi_parts['name']
     if not virtual:
         if is_global:
-            if csn_name[0:4] == 'cef_':
+            if csn_name[:4] == 'cef_':
                 csn_name = csn_name[4:]
         else:
             csn_name = get_capi_name(func.get_name(), False, None)
             prefix = func.parent.get_capi_name()
             if prefix[-2:] == '_t':
                 prefix = prefix[:-2]
-            if prefix[0:3] == 'cef':
+            if prefix[:3] == 'cef':
                 subprefix = prefix[3:]
                 pos = csn_name.find(subprefix)
                 if pos >= 0:
-                    csn_name = csn_name[0:pos]
+                    csn_name = csn_name[:pos]
 
     csn_args = []
     for carg in capi_parts['args']:
@@ -41,34 +41,28 @@ def get_func_parts(func, slot, is_global = False):
         name = schema.quote_name( carg[carg.rindex(' ')+1:] )
         csn_args.append({'name' : name, 'type' : type})
 
-    iname = ''
-    if virtual:
-        iname = schema.get_iname(func.parent)
-
-    result = {
+    iname = schema.get_iname(func.parent) if virtual else ''
+    return {
         'basefunc': False,
         'virtual': virtual,
         'obj': func,
         'slot': '%x' % slot,
         'name': func.get_name(),
-        'field_name': '_' + func.get_capi_name(),
-        'delegate_type': func.get_capi_name() + '_delegate',
+        'field_name': f'_{func.get_capi_name()}',
+        'delegate_type': f'{func.get_capi_name()}_delegate',
         'delegate_slot': '_ds%x' % slot,
-
         'capi_name': capi_parts['name'],
         'capi_retval': capi_parts['retval'],
         'capi_args': capi_parts['args'],
-
         'csn_name': csn_name,
-        'csn_retval': schema.c2cs_type( capi_parts['retval'] ),
+        'csn_retval': schema.c2cs_type(capi_parts['retval']),
         'csn_args': csn_args,
         'csn_entrypoint': capi_parts['name'],
-
-        'csn_args_proto': ', '.join(map(lambda x: '%s %s' % (x['type'], x['name']), csn_args)),
-
+        'csn_args_proto': ', '.join(
+            map(lambda x: '%s %s' % (x['type'], x['name']), csn_args)
+        ),
         'iname': iname,
-        }
-    return result
+    }
 
 def get_base_func(cls, slot, name, cname):
     return {
@@ -144,33 +138,26 @@ def get_funcs(cls, base = True):
     funcs = []
 
     if base:
-        for func in get_base_funcs(cls):
-            funcs.append( func )
-
-    i = 3
-    for func in cls.get_virtual_funcs():
-        funcs.append( get_func_parts(func, i) )
-        i += 1
+        funcs.extend(iter(get_base_funcs(cls)))
+    funcs.extend(
+        get_func_parts(func, i)
+        for i, func in enumerate(cls.get_virtual_funcs(), start=3)
+    )
 
     return funcs
 
 def make_struct_members(cls):
-    result = []
-
-    static_funcs = []
     funcs = get_funcs(cls)
 
-    delegate_visibility = "internal"
-    if schema.is_proxy(cls):
-        delegate_visibility = "private"
+    delegate_visibility = "private" if schema.is_proxy(cls) else "internal"
+    static_funcs = [get_func_parts(func, 0) for func in cls.get_static_funcs()]
+    result = ['internal cef_base_t _base;']
+    result.extend(
+        'internal IntPtr %(field_name)s;' % func
+        for func in funcs
+        if not func['basefunc']
+    )
 
-    for func in cls.get_static_funcs():
-        static_funcs.append( get_func_parts(func, 0) )
-
-    result.append('internal cef_base_t _base;')
-    for func in funcs:
-        if not func['basefunc']:
-            result.append('internal IntPtr %(field_name)s;' % func)
     result.append('')
 
     for func in static_funcs:
@@ -180,64 +167,81 @@ def make_struct_members(cls):
         postfixs = schema.get_platform_retval_postfixs(func['csn_retval'])
         for px in postfixs:
             func['px'] = px
-            result.append('[UnmanagedFunctionPointer(%s)]' % schema.CEF_CALLBACK)
-            result.append('#if !DEBUG')
-            result.append('[SuppressUnmanagedCodeSecurity]')
-            result.append('#endif')
-            result.append(delegate_visibility + ' delegate %(csn_retval)s%(px)s %(delegate_type)s%(px)s(%(csn_args_proto)s);' % func)
-            result.append('')
+            result.extend(
+                (
+                    '[UnmanagedFunctionPointer(%s)]' % schema.CEF_CALLBACK,
+                    '#if !DEBUG',
+                    '[SuppressUnmanagedCodeSecurity]',
+                    '#endif',
+                    delegate_visibility
+                    + ' delegate %(csn_retval)s%(px)s %(delegate_type)s%(px)s(%(csn_args_proto)s);'
+                    % func,
+                    '',
+                )
+            )
 
     for func in funcs:
         if schema.is_proxy(cls):
             postfixs = schema.get_platform_retval_postfixs(func['csn_retval'])
             for px in postfixs:
                 func['px'] = px
-                result.append('// %(name)s' % func)
-                result.append('private static IntPtr _p%(slot)s%(px)s;' % func)
-                result.append('private static %(delegate_type)s%(px)s _d%(slot)s%(px)s;' % func)
-                result.append('')
-                result.append('public static %(csn_retval)s%(px)s %(csn_name)s%(px)s(%(csn_args_proto)s)' % func)
-                result.append('{')
-                result.append('    %(delegate_type)s%(px)s d;' % func)
-                result.append('    var p = self->%(field_name)s;' % func)
-                result.append('    if (p == _p%(slot)s%(px)s) { d = _d%(slot)s%(px)s; }' % func)
-                result.append('    else')
-                result.append('    {')
-                result.append('        d = (%(delegate_type)s%(px)s)Marshal.GetDelegateForFunctionPointer(p, typeof(%(delegate_type)s%(px)s));' % func)
-                result.append('        if (_p%(slot)s%(px)s == IntPtr.Zero) { _d%(slot)s%(px)s = d; _p%(slot)s%(px)s = p; }' % func)
-                result.append('    }')
+                result.extend(
+                    (
+                        '// %(name)s' % func,
+                        'private static IntPtr _p%(slot)s%(px)s;' % func,
+                        'private static %(delegate_type)s%(px)s _d%(slot)s%(px)s;'
+                        % func,
+                        '',
+                        'public static %(csn_retval)s%(px)s %(csn_name)s%(px)s(%(csn_args_proto)s)'
+                        % func,
+                        '{',
+                        '    %(delegate_type)s%(px)s d;' % func,
+                        '    var p = self->%(field_name)s;' % func,
+                        '    if (p == _p%(slot)s%(px)s) { d = _d%(slot)s%(px)s; }'
+                        % func,
+                        '    else',
+                        '    {',
+                        '        d = (%(delegate_type)s%(px)s)Marshal.GetDelegateForFunctionPointer(p, typeof(%(delegate_type)s%(px)s));'
+                        % func,
+                        '        if (_p%(slot)s%(px)s == IntPtr.Zero) { _d%(slot)s%(px)s = d; _p%(slot)s%(px)s = p; }'
+                        % func,
+                        '    }',
+                    )
+                )
+
                 args = ', '.join(map(lambda x: x['name'], func['csn_args']))
                 if func['csn_retval'] == 'void':
                     result.append('    d(%s);' % args)
                 else:
                     result.append('    return d(%s);' % args)
-                result.append('}')
-                result.append('')
-
+                result.extend(('}', ''))
     if schema.is_handler(cls):
         iname = schema.get_iname(cls)
-        result.append('private static int _sizeof;')
-        result.append('')
-        result.append('static %s()' % iname)
-        result.append('{')
-        result.append(indent + '_sizeof = Marshal.SizeOf(typeof(%s));' % iname)
-        result.append('}')
-        result.append('')
-
-        result.append('internal static %s* Alloc()' % iname)
-        result.append('{')
-        result.append(indent + 'var ptr = (%s*)Marshal.AllocHGlobal(_sizeof);' % iname)
-        result.append(indent + '*ptr = new %s();' % iname)
-        result.append(indent + 'ptr->_base._size = (UIntPtr)_sizeof;')
-        result.append(indent + 'return ptr;')
-        result.append('}')
-        result.append('')
-
-        result.append('internal static void Free(%s* ptr)' % iname)
-        result.append('{')
-        result.append(indent + 'Marshal.FreeHGlobal((IntPtr)ptr);')
-        result.append('}')
-        result.append('')
+        result.extend(
+            (
+                'private static int _sizeof;',
+                '',
+                'static %s()' % iname,
+                '{',
+                indent + '_sizeof = Marshal.SizeOf(typeof(%s));' % iname,
+                '}',
+                '',
+                'internal static %s* Alloc()' % iname,
+                '{',
+                indent
+                + 'var ptr = (%s*)Marshal.AllocHGlobal(_sizeof);' % iname,
+                indent + '*ptr = new %s();' % iname,
+                f'{indent}ptr->_base._size = (UIntPtr)_sizeof;',
+                f'{indent}return ptr;',
+                '}',
+                '',
+                'internal static void Free(%s* ptr)' % iname,
+                '{',
+                f'{indent}Marshal.FreeHGlobal((IntPtr)ptr);',
+                '}',
+                '',
+            )
+        )
 
     return result
 
@@ -275,40 +279,59 @@ def make_libcef_file(header):
 # Generating C# wrappers
 #
 def make_wrapper_g_file(cls):
-    body = []
+    body = [
+        'using System;',
+        'using System.Collections.Generic;',
+        'using System.Diagnostics;',
+        'using System.Runtime.InteropServices;',
+        'using %s;' % schema.interop_namespace,
+        '',
+    ]
 
-    body.append('using System;')
-    body.append('using System.Collections.Generic;')
-    body.append('using System.Diagnostics;')
-    body.append('using System.Runtime.InteropServices;')
-    # body.append('using System.Diagnostics.CodeAnalysis;')
-    body.append('using %s;' % schema.interop_namespace)
-    body.append('')
 
-    for line in schema.get_overview(cls):
-        body.append('// %s' % line)
-
+    body.extend('// %s' % line for line in schema.get_overview(cls))
     if schema.is_proxy(cls):
-        body.append('public sealed unsafe partial class %s : IDisposable' % schema.cpp2csname(cls.get_name()))
-        body.append('{')
-        body.append( indent + ('\n' + indent + indent).join( make_proxy_g_body(cls) ) )
-        body.append('}')
+        body.extend(
+            (
+                'public sealed unsafe partial class %s : IDisposable'
+                % schema.cpp2csname(cls.get_name()),
+                '{',
+            )
+        )
+
+        body.extend(
+            (
+                indent + ('\n' + indent + indent).join(make_proxy_g_body(cls)),
+                '}',
+            )
+        )
 
     if schema.is_handler(cls):
-        body.append('public abstract unsafe partial class %s' % schema.cpp2csname(cls.get_name()))
-        body.append('{')
-        body.append( indent + ('\n' + indent + indent).join( make_handler_g_body(cls) ) )
-        body.append('}')
+        body.extend(
+            (
+                'public abstract unsafe partial class %s'
+                % schema.cpp2csname(cls.get_name()),
+                '{',
+            )
+        )
 
-    return make_file_header() + \
-"""namespace %(namespace)s
+        body.extend(
+            (
+                indent
+                + ('\n' + indent + indent).join(make_handler_g_body(cls)),
+                '}',
+            )
+        )
+
+        return make_file_header() + \
+    """namespace %(namespace)s
 {
 %(body)s
 }
 """ % {
-        'namespace': schema.namespace,
-        'body': indent + ('\n'+indent).join(body)
-      }
+            'namespace': schema.namespace,
+            'body': indent + ('\n'+indent).join(body)
+          }
 
 #
 # make proxy body
@@ -317,97 +340,70 @@ def make_proxy_g_body(cls):
     csname = schema.cpp2csname(cls.get_name())
     iname = schema.get_iname(cls)
 
-    result = []
-
-    # result.append('#if DEBUG')
-    # result.append('private static int _objCt;')
-    # result.append('internal static int ObjCt { get { return _objCt; } }')
-    # result.append('#endif')
-    # result.append('')
-
-    # static methods
-    result.append('internal static %(csname)s FromNative(%(iname)s* ptr)' % { 'csname' : csname, 'iname' : iname })
-    result.append('{')
-    result.append(indent + 'return new %s(ptr);' % csname)
-    result.append('}')
-    result.append('')
-
-    result.append('internal static %(csname)s FromNativeOrNull(%(iname)s* ptr)' % { 'csname' : csname, 'iname' : iname })
-    result.append('{')
-    result.append(indent + 'if (ptr == null) return null;')
-    result.append(indent + 'return new %s(ptr);' % csname)
-    result.append('}')
-    result.append('')
-
-    # private fields
-    result.append('private %s* _self;' % iname)
-    result.append('')
-
-    # ctor
-    result.append('private %(csname)s(%(iname)s* ptr)' % { 'csname' : csname, 'iname' : iname })
-    result.append('{')
-    result.append(indent + 'if (ptr == null) throw new ArgumentNullException("ptr");')
-    result.append(indent + '_self = ptr;')
-    #
-    # todo: diagnostics code: Interlocked.Increment(ref _objCt);
-    #
-    result.append('}')
-    result.append('')
-
-    # disposable
-    result.append('~%s()' % csname)
-    result.append('{')
-    result.append(indent + 'if (_self != null)')
-    result.append(indent + '{')
-    result.append(indent + indent + 'Release();')
-    result.append(indent + indent + '_self = null;')
-    result.append(indent + '}')
-    result.append('}')
-    result.append('')
-
-    result.append('public void Dispose()')
-    result.append('{')
-    result.append(indent + 'if (_self != null)')
-    result.append(indent + '{')
-    result.append(indent + indent + 'Release();')
-    result.append(indent + indent + '_self = null;')
-    result.append(indent + '}')
-    result.append(indent + 'GC.SuppressFinalize(this);')
-    result.append('}')
-    result.append('')
-
-    result.append('internal int AddRef()')
-    result.append('{')
-    result.append(indent + 'return %(iname)s.add_ref(_self);' % { 'iname': iname })
-    result.append('}')
-    result.append('')
-
-    result.append('internal int Release()')
-    result.append('{')
-    result.append(indent + 'return %(iname)s.release(_self);' % { 'iname': iname })
-    result.append('}')
-    result.append('')
-
-    result.append('internal int RefCt')
-    result.append('{')
-    result.append(indent + 'get { return %(iname)s.get_refct(_self); }' % { 'iname': iname })
-    result.append('}')
-    result.append('')
-
-    # TODO: use it only if it is really necessary!
-    # result.append('internal %(iname)s* Pointer' % { 'iname' : iname })
-    # result.append('{')
-    # result.append(indent + 'get { return _self; }')
-    # result.append('}')
-    # result.append('')
-
-    result.append('internal %(iname)s* ToNative()' % { 'iname' : iname })
-    result.append('{')
-    result.append(indent + 'AddRef();')
-    result.append(indent + 'return _self;')
-    result.append('}')
-
-    return result
+    return [
+        'internal static %(csname)s FromNative(%(iname)s* ptr)'
+        % {'csname': csname, 'iname': iname},
+        '{',
+        indent + 'return new %s(ptr);' % csname,
+        '}',
+        '',
+        'internal static %(csname)s FromNativeOrNull(%(iname)s* ptr)'
+        % {'csname': csname, 'iname': iname},
+        '{',
+        f'{indent}if (ptr == null) return null;',
+        indent + 'return new %s(ptr);' % csname,
+        '}',
+        '',
+        'private %s* _self;' % iname,
+        '',
+        'private %(csname)s(%(iname)s* ptr)'
+        % {'csname': csname, 'iname': iname},
+        '{',
+        indent + 'if (ptr == null) throw new ArgumentNullException("ptr");',
+        f'{indent}_self = ptr;',
+        '}',
+        '',
+        '~%s()' % csname,
+        '{',
+        f'{indent}if (_self != null)',
+        indent + '{',
+        indent + indent + 'Release();',
+        indent + indent + '_self = null;',
+        indent + '}',
+        '}',
+        '',
+        'public void Dispose()',
+        '{',
+        f'{indent}if (_self != null)',
+        indent + '{',
+        indent + indent + 'Release();',
+        indent + indent + '_self = null;',
+        indent + '}',
+        f'{indent}GC.SuppressFinalize(this);',
+        '}',
+        '',
+        'internal int AddRef()',
+        '{',
+        indent + 'return %(iname)s.add_ref(_self);' % {'iname': iname},
+        '}',
+        '',
+        'internal int Release()',
+        '{',
+        indent + 'return %(iname)s.release(_self);' % {'iname': iname},
+        '}',
+        '',
+        'internal int RefCt',
+        '{',
+        indent
+        + 'get { return %(iname)s.get_refct(_self); }' % {'iname': iname},
+        '}',
+        '',
+        'internal %(iname)s* ToNative()' % {'iname': iname},
+        '{',
+        f'{indent}AddRef();',
+        f'{indent}return _self;',
+        '}',
+    ]
 
 #
 # make handler body
@@ -418,79 +414,73 @@ def make_handler_g_body(cls):
 
     funcs = get_funcs(cls)
 
-    result = []
+    result = [
+        'private static Dictionary<IntPtr, %(csname)s> _roots = new Dictionary<IntPtr, %(csname)s>();'
+        % {'csname': csname},
+        '',
+        'private int _refct;',
+        'private %s* _self;' % iname,
+        '',
+        'protected object SyncRoot { get { return this; } }',
+        '',
+    ]
 
-    # this dictionary used to keep object alive even when we doesn't reference object directly, but it can be referenced only from native side
-    result.append('private static Dictionary<IntPtr, %(csname)s> _roots = new Dictionary<IntPtr, %(csname)s>();' % { 'csname' : csname })
-    result.append('')
-
-    result.append('private int _refct;')
-    result.append('private %s* _self;' % iname)
-    # result.append('private bool _disposed;')
-    result.append('')
-
-    result.append('protected object SyncRoot { get { return this; } }')
-    result.append('')
 
     if schema.is_reversible(cls):
-        result.append('internal static %s FromNativeOrNull(%s* ptr)' % (csname, iname))
-        result.append('{')
+        result.extend(
+            (
+                'internal static %s FromNativeOrNull(%s* ptr)'
+                % (csname, iname),
+                '{',
+            )
+        )
+
         result.append(indent + '%s value = null;' % csname)
-        result.append(indent + 'bool found;')
-        result.append(indent + 'lock (_roots)')
+        result.append(f'{indent}bool found;')
+        result.append(f'{indent}lock (_roots)')
         result.append(indent + '{')
         result.append(indent + indent + 'found = _roots.TryGetValue((IntPtr)ptr, out value);')
         result.append(indent + '}')
-        result.append(indent + 'return found ? value : null;')
-        result.append('}')
-        result.append('')
+        result.extend((f'{indent}return found ? value : null;', '}', ''))
+        result.extend(
+            ('internal static %s FromNative(%s* ptr)' % (csname, iname), '{')
+        )
 
-        result.append('internal static %s FromNative(%s* ptr)' % (csname, iname))
-        result.append('{')
-        result.append(indent + 'var value = FromNativeOrNull(ptr);')
+        result.append(f'{indent}var value = FromNativeOrNull(ptr);')
         result.append(indent + 'if (value == null) throw ExceptionBuilder.ObjectNotFound();')
-        result.append(indent + 'return value;')
-        result.append('}')
-        result.append('')
+        result.extend((f'{indent}return value;', '}', ''))
+    result.extend(
+        'private %(iname)s.%(delegate_type)s %(delegate_slot)s;' % func
+        for func in funcs
+    )
 
-    for func in funcs:
-        result.append('private %(iname)s.%(delegate_type)s %(delegate_slot)s;' % func)
     result.append('')
 
-    # ctor
-    result.append('protected %s()' % csname)
-    result.append('{')
-    result.append(indent + '_self = %s.Alloc();' % iname)
-    result.append('');
+    result.extend(('protected %s()' % csname, '{'))
+    result.extend((indent + '_self = %s.Alloc();' % iname, ''))
     for func in funcs:
         result.append(indent + '%(delegate_slot)s = new %(iname)s.%(delegate_type)s(%(csn_name)s);' % func)
         result.append(indent + '_self->%(field_name)s = Marshal.GetFunctionPointerForDelegate(%(delegate_slot)s);' % func)
-    result.append('}')
-    result.append('')
+    result.extend(('}', ''))
+    result.extend(('~%s()' % csname, '{'))
+    result.extend(
+        (
+            f'{indent}Dispose(false);',
+            '}',
+            '',
+            'protected virtual void Dispose(bool disposing)',
+            '{',
+        )
+    )
 
-    # finalizer & dispose
-    result.append('~%s()' % csname)
-    result.append('{')
-    result.append(indent + 'Dispose(false);')
-    result.append('}')
-    result.append('')
-
-    result.append('protected virtual void Dispose(bool disposing)')
-    result.append('{')
     # result.append(indent + '_disposed = true;')
-    result.append(indent + 'if (_self != null)')
+    result.append(f'{indent}if (_self != null)')
     result.append(indent + '{')
     result.append(indent + indent + '%s.Free(_self);' % iname)
     result.append(indent + indent + '_self = null;')
-    result.append(indent + '}')
-    result.append('}')
-    result.append('')
-
-    # todo: this methods must throw exception if object already disposed
-    # todo: verify self pointer in debug
-    result.append('private int add_ref(%s* self)' % iname)
-    result.append('{')
-    result.append(indent + 'lock (SyncRoot)')
+    result.extend((indent + '}', '}', ''))
+    result.extend(('private int add_ref(%s* self)' % iname, '{'))
+    result.append(f'{indent}lock (SyncRoot)')
     result.append(indent + '{')
     result.append(indent + indent + 'var result = ++_refct;')
     result.append(indent + indent + 'if (result == 1)')
@@ -498,13 +488,9 @@ def make_handler_g_body(cls):
     result.append(indent + indent + indent + 'lock (_roots) { _roots.Add((IntPtr)_self, this); }')
     result.append(indent + indent + '}')
     result.append(indent + indent + 'return result;')
-    result.append(indent + '}')
-    result.append('}')
-    result.append('')
-
-    result.append('private int release(%s* self)' % iname)
-    result.append('{')
-    result.append(indent + 'lock (SyncRoot)')
+    result.extend((indent + '}', '}', ''))
+    result.extend(('private int release(%s* self)' % iname, '{'))
+    result.append(f'{indent}lock (SyncRoot)')
     result.append(indent + '{')
     result.append(indent + indent + 'var result = --_refct;')
     result.append(indent + indent + 'if (result == 0)')
@@ -512,29 +498,21 @@ def make_handler_g_body(cls):
     result.append(indent + indent + indent + 'lock (_roots) { _roots.Remove((IntPtr)_self); }')
     result.append(indent + indent + '}')
     result.append(indent + indent + 'return result;')
-    result.append(indent + '}')
-    result.append('}')
-    result.append('')
-
-    result.append('private int get_refct(%s* self)' % iname)
-    result.append('{')
-    result.append(indent + 'return _refct;')
-    result.append('}')
-    result.append('')
-
-    result.append('internal %s* ToNative()' % iname)
-    result.append('{')
-    result.append(indent + 'add_ref(_self);')
-    result.append(indent + 'return _self;')
-    result.append('}')
-    result.append('')
-
-    result.append('[Conditional("DEBUG")]')
-    result.append('private void CheckSelf(%s* self)' % iname)
-    result.append('{')
-    result.append(indent + 'if (_self != self) throw ExceptionBuilder.InvalidSelfReference();')
-    result.append('}')
-    result.append('')
+    result.extend((indent + '}', '}', ''))
+    result.extend(('private int get_refct(%s* self)' % iname, '{'))
+    result.extend((f'{indent}return _refct;', '}', ''))
+    result.extend(('internal %s* ToNative()' % iname, '{'))
+    result.append(f'{indent}add_ref(_self);')
+    result.extend((f'{indent}return _self;', '}', '', '[Conditional("DEBUG")]'))
+    result.extend(('private void CheckSelf(%s* self)' % iname, '{'))
+    result.extend(
+        (
+            indent
+            + 'if (_self != self) throw ExceptionBuilder.InvalidSelfReference();',
+            '}',
+            '',
+        )
+    )
 
     return result
 
@@ -542,39 +520,65 @@ def make_handler_g_body(cls):
 # Generating impl templates
 #
 def make_impl_tmpl_file(cls):
-    body = []
+    body = [
+        'using System;',
+        'using System.Collections.Generic;',
+        'using System.Diagnostics;',
+        'using System.Runtime.InteropServices;',
+        'using %s;' % schema.interop_namespace,
+        '',
+    ]
 
-    body.append('using System;')
-    body.append('using System.Collections.Generic;')
-    body.append('using System.Diagnostics;')
-    body.append('using System.Runtime.InteropServices;')
-    # body.append('using System.Diagnostics.CodeAnalysis;')
-    body.append('using %s;' % schema.interop_namespace)
-    body.append('')
 
     append_xmldoc(body, cls.get_comment())
 
     if schema.is_proxy(cls):
-        body.append('public sealed unsafe partial class %s' % schema.cpp2csname(cls.get_name()))
-        body.append('{')
-        body.append( indent + ('\n' + indent + indent).join( make_proxy_impl_tmpl_body(cls) ) )
-        body.append('}')
+        body.extend(
+            (
+                'public sealed unsafe partial class %s'
+                % schema.cpp2csname(cls.get_name()),
+                '{',
+            )
+        )
+
+        body.extend(
+            (
+                indent
+                + ('\n' + indent + indent).join(
+                    make_proxy_impl_tmpl_body(cls)
+                ),
+                '}',
+            )
+        )
 
     if schema.is_handler(cls):
-        body.append('public abstract unsafe partial class %s' % schema.cpp2csname(cls.get_name()))
-        body.append('{')
-        body.append( indent + ('\n' + indent + indent).join( make_handler_impl_tmpl_body(cls) ) )
-        body.append('}')
+        body.extend(
+            (
+                'public abstract unsafe partial class %s'
+                % schema.cpp2csname(cls.get_name()),
+                '{',
+            )
+        )
 
-    return \
-"""namespace %(namespace)s
+        body.extend(
+            (
+                indent
+                + ('\n' + indent + indent).join(
+                    make_handler_impl_tmpl_body(cls)
+                ),
+                '}',
+            )
+        )
+
+        return \
+    """namespace %(namespace)s
 {
 %(body)s
 }
 """ % {
-        'namespace': schema.namespace,
-        'body': indent + ('\n'+indent).join(body)
-      }
+            'namespace': schema.namespace,
+            'body': indent + ('\n'+indent).join(body)
+          }
 
 
 
