@@ -15,17 +15,14 @@ import time
 
 def notify(msg):
     """ Display a message. """
-    sys.stdout.write('  NOTE: '+msg+'\n')
+    sys.stdout.write(f'  NOTE: {msg}' + '\n')
 
 def wrap_text(text, indent = '', maxchars = 80):
     """ Wrap the text to the specified number of characters. If
     necessary a line will be broken and wrapped after a word.
     """
-    result = ''
     lines = textwrap.wrap(text, maxchars - len(indent))
-    for line in lines:
-        result += indent+line+'\n'
-    return result
+    return ''.join(indent+line+'\n' for line in lines)
     
 def wrap_code(code, indent = '    ', maxchars = 80, splitchars = '(=,'):
     """ Wrap the code lines to the specified number of characters. If
@@ -33,10 +30,10 @@ def wrap_code(code, indent = '    ', maxchars = 80, splitchars = '(=,'):
     characters.
     """
     output = ''
-    
+
     # normalize line endings
     code = code.replace("\r\n", "\n")
-    
+
     # break the code chunk into lines
     lines = string.split(code, '\n')
     for line in lines:
@@ -44,7 +41,7 @@ def wrap_code(code, indent = '    ', maxchars = 80, splitchars = '(=,'):
             # line is short enough that it doesn't need to be wrapped
             output += line + '\n'
             continue
-        
+
         # retrieve the whitespace at the beginning of the line for later use
         # as padding
         ws = ''
@@ -53,15 +50,14 @@ def wrap_code(code, indent = '    ', maxchars = 80, splitchars = '(=,'):
                 ws += char
             else:
                 break
-            
+
         # iterate over all characters in the string keeping track of where the
         # last valid break character was found and wrapping the line
         # accordingly
         lastsplit = 0
         nextsplit = -1
         splitct = 0
-        pos = 0
-        for char in line:
+        for pos, char in enumerate(line):
             if splitchars.find(char) >= 0:
                 # a new split position has been found
                 nextsplit = pos
@@ -81,7 +77,6 @@ def wrap_code(code, indent = '    ', maxchars = 80, splitchars = '(=,'):
                     output += section
                     lastsplit = nextsplit + 1
                     splitct += 1
-            pos += 1
         if len(line) - lastsplit > 0:
             # output the remainder of the line
             section = line[lastsplit:]
@@ -91,12 +86,12 @@ def wrap_code(code, indent = '    ', maxchars = 80, splitchars = '(=,'):
                 section = string.strip(section)
             output += section
         output += '\n'
-    
+
     return output
 
 def get_capi_file_name(cppname):
     """ Convert a C++ header file name to a C API header file name. """
-    return cppname[:-2]+'_capi.h'
+    return f'{cppname[:-2]}_capi.h'
 
 def get_capi_name(cppname, isclassname, prefix = None):
     """ Convert a C++ CamelCaps name to a C API underscore name. """
@@ -105,26 +100,29 @@ def get_capi_name(cppname, isclassname, prefix = None):
     for chr in cppname:
         # add an underscore if the current character is an upper case letter
         # and the last character was a lower case letter
-        if len(result) > 0 and not chr.isdigit() \
-            and string.upper(chr) == chr \
-            and not string.upper(lastchr) == lastchr:
+        if (
+            result != ''
+            and not chr.isdigit()
+            and string.upper(chr) == chr
+            and string.upper(lastchr) != lastchr
+        ):
             result += '_'
         result += string.lower(chr)
         lastchr = chr
-    
+
     if isclassname:
         result += '_t'
-        
-    if not prefix is None:
-        if prefix[0:3] == 'cef':
+
+    if prefix is not None:
+        if prefix[:3] == 'cef':
             # if the prefix name is duplicated in the function name
             # remove that portion of the function name
             subprefix = prefix[3:]
             pos = result.find(subprefix)
             if pos >= 0:
-                result = result[0:pos]+ result[pos+len(subprefix):]
-        result = prefix+'_'+result
-        
+                result = result[:pos] + result[pos+len(subprefix):]
+        result = f'{prefix}_{result}'
+
     return result
 
 def get_prev_line(body, pos):
@@ -139,7 +137,7 @@ def get_prev_line(body, pos):
 def get_comment(body, name):
     """ Retrieve the comment for a class or function. """
     result = []
-    
+
     pos = body.find(name)
     while pos > 0:
         data = get_prev_line(body, pos)
@@ -148,18 +146,18 @@ def get_comment(body, name):
         if len(line) == 0:
             # check if the next previous line is a comment
             prevdata = get_prev_line(body, pos)
-            if string.strip(prevdata['line'])[0:2] == '//':
+            if string.strip(prevdata['line'])[:2] == '//':
                 result.append(None)
             else:
                 break
-        elif line[0:2] == '/*' or line[-2:] == '*/':
+        elif line[:2] == '/*' or line[-2:] == '*/':
             continue
-        elif line[0:2] == '//':
+        elif line[:2] == '//':
             # keep the comment line including any leading spaces
             result.append(line[2:])
         else:
             break
-    
+
     result.reverse()
     return result
 
@@ -170,51 +168,49 @@ def format_comment(comment, indent, translate_map = None, maxchars = 80):
     hasemptyline = False
     for line in comment:
         # if the line starts with a leading space, remove that space
-        if not line is None and len(line) > 0 and line[0:1] == ' ':
+        if line is not None and len(line) > 0 and line[:1] == ' ':
             line = line[1:]
             didremovespace = True
         else:
             didremovespace = False
 
-        if line is None or len(line) == 0 or line[0:1] == ' ' \
-            or line[0:1] == '/':
-            # the previous paragraph, if any, has ended
-            if len(wrapme) > 0:
-                if not translate_map is None:
-                    # apply the translation
-                    for key in translate_map.keys():
-                        wrapme = wrapme.replace(key, translate_map[key])
+        if (
+            line is None
+            or len(line) == 0
+            or line[:1] == ' '
+            or line[:1] == '/'
+        ) and wrapme != '':
+            if translate_map is not None:
+                # apply the translation
+                for key in translate_map.keys():
+                    wrapme = wrapme.replace(key, translate_map[key])
                 # output the previous paragraph
-                result += wrap_text(wrapme, indent+'// ', maxchars)
-                wrapme = ''
-        
-        if not line is None:
-            if len(line) == 0 or line[0:1] == ' ' or line[0:1] == '/':
-                # blank lines or anything that's further indented should be
-                # output as-is
-                result += indent+'//'
-                if len(line) > 0:
-                    if didremovespace:
-                        result += ' '+line
-                    else:
-                        result += line
-                result += '\n'
-            else:
-                # add to the current paragraph
-                wrapme += line+' '
-        else:
+            result += wrap_text(wrapme, f'{indent}// ', maxchars)
+            wrapme = ''
+
+        if line is None:
             # output an empty line
             hasemptyline = True
             result += '\n'
-            
-    if len(wrapme) > 0:
-        if not translate_map is None:
+
+        elif len(line) == 0 or line[:1] == ' ' or line[:1] == '/':
+                # blank lines or anything that's further indented should be
+                # output as-is
+            result += f'{indent}//'
+            if len(line) > 0:
+                result += f' {line}' if didremovespace else line
+            result += '\n'
+        else:
+                # add to the current paragraph
+            wrapme += f'{line} '
+    if wrapme != '':
+        if translate_map is not None:
             # apply the translation
             for key in translate_map.keys():
                 wrapme = wrapme.replace(key, translate_map[key])
         # output the previous paragraph
-        result += wrap_text(wrapme, indent+'// ', maxchars)
-        
+        result += wrap_text(wrapme, f'{indent}// ', maxchars)
+
     if hasemptyline:
         # an empty line means a break between comments, so the comment is
         # probably a section heading and should have an extra line before it
@@ -303,12 +299,9 @@ def str_to_dict(str):
             continue
         sparts = string.split(part, '=')
         if len(sparts) > 2:
-            raise Exception('Invalid dictionary pair format: '+part)
+            raise Exception(f'Invalid dictionary pair format: {part}')
         name = string.strip(sparts[0])
-        if len(sparts) == 2:
-            val = string.strip(sparts[1])
-        else:
-            val = True
+        val = string.strip(sparts[1]) if len(sparts) == 2 else True
         if name in dict:
             # a value with this name already exists
             curval = dict[name]
@@ -324,17 +317,15 @@ def dict_to_str(dict):
     """ Convert a dictionary to a string. """
     str = []
     for name in dict.keys():
-        if not isinstance(dict[name], list):
-            if dict[name] is True:
-                # currently a bool value
-                str.append(name)
-            else:
-                # currently a string value
-                str.append(name+'='+dict[name])
-        else:
+        if isinstance(dict[name], list):
             # currently a list value
-            for val in dict[name]:
-                str.append(name+'='+val)
+            str.extend(f'{name}={val}' for val in dict[name])
+        elif dict[name] is True:
+            # currently a bool value
+            str.append(name)
+        else:
+                # currently a string value
+            str.append(f'{name}={dict[name]}')
     return string.join(str, ',')
 
 
@@ -432,7 +423,7 @@ def get_next_function_impl(existing, name):
     for item in existing:
         if item['name'] == name:
             result = item
-            existing.remove(item)
+            existing.remove(result)
             break
     return result
 
@@ -468,8 +459,10 @@ class obj_header:
         """ Add all header files from the specified directory. """
         files = get_files(os.path.join(directory, '*.h'))
         for file in files:
-            if len(excluded_files) == 0 or \
-                not os.path.split(file)[1] in excluded_files:
+            if (
+                len(excluded_files) == 0
+                or os.path.split(file)[1] not in excluded_files
+            ):
                 self.add_file(file)
 
     def add_file(self, filepath):
@@ -477,13 +470,13 @@ class obj_header:
         
         filename = os.path.split(filepath)[1]
         added = False
-        
+
         # read the input file into memory
         data = read_file(filepath)
-        
+
         # remove space from between template definition end brackets
         data = data.replace("> >", ">>")
-        
+
         # extract global typedefs
         p = re.compile('\ntypedef'+_cre_space+_cre_typedef+';',
                        re.MULTILINE | re.DOTALL)
@@ -493,11 +486,11 @@ class obj_header:
             for value in list:
                 pos = value.rfind(' ')
                 if pos < 0:
-                  raise Exception('Invalid typedef: '+value)
+                    raise Exception(f'Invalid typedef: {value}')
                 alias = value[pos+1:]
                 value = value[:pos]
                 self.typedefs.append(obj_typedef(self, filename, value, alias))
-            
+
         # extract global functions
         p = re.compile('\n'+_cre_attrib+'\n'+_cre_func+'\((.*?)\)',
                        re.MULTILINE | re.DOTALL)
@@ -507,14 +500,14 @@ class obj_header:
 
             # build the global function objects
             for attrib, retval, argval in list:
-                comment = get_comment(data, retval+'('+argval+');')
+                comment = get_comment(data, f'{retval}({argval});')
                 self.funcs.append(obj_function(self, filename, attrib, retval,
                                                argval, comment))
-        
+
         # extract forward declarations
         p = re.compile('\nclass'+_cre_space+_cre_cfname+';')
         forward_declares = p.findall(data)
-        
+
         # extract classes
         p = re.compile('\n'+_cre_attrib+
                        '\nclass'+_cre_space+_cre_cfname+_cre_space+
@@ -527,7 +520,7 @@ class obj_header:
 
             # build the class objects
             for attrib, name, body in list:
-                comment = get_comment(data, name+' : public virtual CefBase')
+                comment = get_comment(data, f'{name} : public virtual CefBase')
                 self.classes.append(
                     obj_class(self, filename, attrib, name, body, comment,
                               forward_declares))
@@ -538,25 +531,19 @@ class obj_header:
 
     def __repr__(self):
         result = ''
-        
+
         if len(self.typedefs) > 0:
-            strlist = []
-            for cls in self.typedefs:
-                strlist.append(str(cls))
+            strlist = [str(cls) for cls in self.typedefs]
             result += string.join(strlist, "\n") + "\n\n"
-            
+
         if len(self.funcs) > 0:
-            strlist = []
-            for cls in self.funcs:
-                strlist.append(str(cls))
+            strlist = [str(cls) for cls in self.funcs]
             result += string.join(strlist, "\n") + "\n\n"
-            
+
         if len(self.classes) > 0:
-            strlist = []
-            for cls in self.classes:
-                strlist.append(str(cls))
+            strlist = [str(cls) for cls in self.classes]
             result += string.join(strlist, "\n")
-        
+
         return result
     
     def get_file_names(self):
@@ -572,40 +559,27 @@ class obj_header:
         if filename is None:
             return self.funcs
         else:
-            # only return the functions in the specified file
-            res = []
-            for func in self.funcs:
-                if func.get_file_name() == filename:
-                    res.append(func)
-            return res
+            return [func for func in self.funcs if func.get_file_name() == filename]
     
     def get_classes(self, filename = None):
         """ Return the array of class objects. """
         if filename is None:
             return self.classes
         else:
-            # only return the classes in the specified file
-            res = []
-            for cls in self.classes:
-                if cls.get_file_name() == filename:
-                    res.append(cls)
-            return res
+            return [cls for cls in self.classes if cls.get_file_name() == filename]
     
     def get_class(self, classname, defined_structs = None):
         """ Return the specified class or None if not found. """
         for cls in self.classes:
             if cls.get_name() == classname:
                 return cls
-            elif not defined_structs is None:
+            elif defined_structs is not None:
                 defined_structs.append(cls.get_capi_name())
         return None
     
     def get_class_names(self):
         """ Returns the names of all classes in this object. """
-        result = []
-        for cls in self.classes:
-            result.append(cls.get_name())
-        return result
+        return [cls.get_name() for cls in self.classes]
     
     def get_types(self, list):
         """ Return a dictionary mapping data types to analyzed values. """
@@ -618,10 +592,7 @@ class obj_header:
     def get_alias_translation(self, alias):
         """ Return a translation of alias to value based on typedef
             statements. """
-        for cls in self.typedefs:
-            if cls.alias == alias:
-                return cls.value
-        return None
+        return next((cls.value for cls in self.typedefs if cls.alias == alias), None)
     
     def get_analysis(self, value, named = True):
         """ Return an analysis of the value based the header file context. """
@@ -645,24 +616,24 @@ class obj_header:
             'empty' : 'NULL',
             'method' : 'function'
         }
-        
+
         # add mappings for all classes and functions
         funcs = self.get_funcs()
         for func in funcs:
-            map[func.get_name()+'()'] = func.get_capi_name()+'()'
-            
+            map[f'{func.get_name()}()'] = f'{func.get_capi_name()}()'
+
         classes = self.get_classes()
         for cls in classes:
             map[cls.get_name()] = cls.get_capi_name()
-            
+
             funcs = cls.get_virtual_funcs()
             for func in funcs:
-                map[func.get_name()+'()'] = func.get_capi_name()+'()'
-                
+                map[f'{func.get_name()}()'] = f'{func.get_capi_name()}()'
+
             funcs = cls.get_static_funcs()
             for func in funcs:
-                map[func.get_name()+'()'] = func.get_capi_name()+'()'
-        
+                map[f'{func.get_name()}()'] = f'{func.get_capi_name()}()'
+
         return map
 
 
@@ -673,14 +644,14 @@ class obj_class:
                  forward_declares):
         if not isinstance(parent, obj_header):
             raise Exception('Invalid parent object type')
-        
+
         self.parent = parent
         self.filename = filename
         self.attribs = str_to_dict(attrib)
         self.name = name
         self.comment = comment
         self.forward_declares = forward_declares
-        
+
         # extract typedefs
         p = re.compile('\n'+_cre_space+'typedef'+_cre_space+_cre_typedef+';',
                        re.MULTILINE | re.DOTALL)
@@ -691,62 +662,56 @@ class obj_class:
         for value in list:
             pos = value.rfind(' ')
             if pos < 0:
-              raise Exception('Invalid typedef: '+value)
+                raise Exception(f'Invalid typedef: {value}')
             alias = value[pos+1:]
             value = value[:pos]
             self.typedefs.append(obj_typedef(self, filename, value, alias))
-            
+
         # extract static functions
         p = re.compile('\n'+_cre_space+_cre_attrib+'\n'+_cre_space+'static'+
                        _cre_space+_cre_func+'\((.*?)\)',
                        re.MULTILINE | re.DOTALL)
         list = p.findall(body)
-        
+
         # build the static function objects
         self.staticfuncs = []
         for attrib, retval, argval in list:
-            comment = get_comment(body, retval+'('+argval+')')
+            comment = get_comment(body, f'{retval}({argval})')
             self.staticfuncs.append(
                 obj_function_static(self, attrib, retval, argval, comment))
-        
+
         # extract virtual functions
         p = re.compile('\n'+_cre_space+_cre_attrib+'\n'+_cre_space+'virtual'+
                        _cre_space+_cre_func+'\((.*?)\)'+_cre_space+_cre_vfmod,
                        re.MULTILINE | re.DOTALL)
         list = p.findall(body)
-        
+
         # build the virtual function objects
         self.virtualfuncs = []
         for attrib, retval, argval, vfmod in list:
-            comment = get_comment(body, retval+'('+argval+')')
+            comment = get_comment(body, f'{retval}({argval})')
             self.virtualfuncs.append(
                 obj_function_virtual(self, attrib, retval, argval, comment,
                                      vfmod))
         
     def __repr__(self):
-        result = '/* '+dict_to_str(self.attribs)+' */ class '+self.name+"\n{"
-        
+        result = f'/* {dict_to_str(self.attribs)} */ class {self.name}' + "\n{"
+
         if len(self.typedefs) > 0:
             result += "\n\t"
-            strlist = []
-            for cls in self.typedefs:
-                strlist.append(str(cls))
+            strlist = [str(cls) for cls in self.typedefs]
             result += string.join(strlist, "\n\t")
-            
+
         if len(self.staticfuncs) > 0:
             result += "\n\t"
-            strlist = []
-            for cls in self.staticfuncs:
-                strlist.append(str(cls))
+            strlist = [str(cls) for cls in self.staticfuncs]
             result += string.join(strlist, "\n\t")
-            
+
         if len(self.virtualfuncs) > 0:
             result += "\n\t"
-            strlist = []
-            for cls in self.virtualfuncs:
-                strlist.append(str(cls))
+            strlist = [str(cls) for cls in self.virtualfuncs]
             result += string.join(strlist, "\n\t")
-        
+
         result += "\n};\n"
         return result
     
@@ -812,10 +777,7 @@ class obj_class:
     def has_typedef_alias(self, alias):
         """ Returns true if the specified typedef alias is defined in the scope
             of this class declaration. """
-        for typedef in self.typedefs:
-          if typedef.get_alias() == alias:
-            return True
-        return False
+        return any(typedef.get_alias() == alias for typedef in self.typedefs)
     
     def get_static_funcs(self):
         """ Return the array of static function objects. """
@@ -837,10 +799,7 @@ class obj_class:
             cls.get_types(list)
     
     def get_alias_translation(self, alias):
-        for cls in self.typedefs:
-            if cls.alias == alias:
-                return cls.value
-        return None
+        return next((cls.value for cls in self.typedefs if cls.alias == alias), None)
     
     def get_analysis(self, value, named = True):
         """ Return an analysis of the value based on the class definition
@@ -871,7 +830,7 @@ class obj_typedef:
         self.value = self.parent.get_analysis(value, False)
 
     def __repr__(self):
-        return 'typedef '+self.value.get_type()+' '+self.alias+';'
+        return f'typedef {self.value.get_type()} {self.alias};'
     
     def get_file_name(self):
         """ Return the C++ header file name. """
@@ -894,7 +853,7 @@ class obj_typedef:
     def get_types(self, list):
         """ Return a dictionary mapping data types to analyzed values. """
         name = self.value.get_type()
-        if not name in list:
+        if name not in list:
             list[name] = self.value
     
     
@@ -929,7 +888,7 @@ class obj_function:
                             self.get_qualified_name())
 
     def __repr__(self):
-        return '/* '+dict_to_str(self.attribs)+' */ '+self.get_cpp_proto()
+        return f'/* {dict_to_str(self.attribs)} */ {self.get_cpp_proto()}'
     
     def get_file_name(self):
         """ Return the C++ header file name. """
@@ -950,7 +909,7 @@ class obj_function:
             return self.name
         else:
             # member function
-            return self.parent.get_name()+'::'+self.name
+            return f'{self.parent.get_name()}::{self.name}'
     
     def get_capi_name(self, prefix = None):
         """ Return the CAPI function name. """
@@ -1007,22 +966,19 @@ class obj_function:
             
     def get_capi_parts(self, defined_structs = [], prefix = None):
         """ Return the parts of the C API function definition. """
-        retval = ''
         dict = self.retval.get_type().get_capi(defined_structs)
-        if dict['format'] == 'single':
-            retval = dict['value']
-            
+        retval = dict['value'] if dict['format'] == 'single' else ''
         name = self.get_capi_name(prefix)
         args = []
-        
+
         if isinstance(self, obj_function_virtual):
             # virtual functions get themselves as the first argument
-            str = 'struct _'+self.parent.get_capi_name()+'* self'
+            str = f'struct _{self.parent.get_capi_name()}* self'
             if isinstance(self, obj_function_virtual) and self.is_const():
                 # const virtual functions get const self pointers
-                str = 'const '+str
+                str = f'const {str}'
             args.append(str)
-        
+
         if len(self.arguments) > 0:
             for cls in self.arguments:
                 type = cls.get_type()
@@ -1034,47 +990,44 @@ class obj_function:
                     type_name = type.get_name()
                     if type.is_const():
                         # for const arrays pass the size argument by value
-                        args.append('size_t '+type_name+'Count')
+                        args.append(f'size_t {type_name}Count')
                     else:
                         # for non-const arrays pass the size argument by address
-                        args.append('size_t* '+type_name+'Count')
+                        args.append(f'size_t* {type_name}Count')
                     args.append(dict['value'])
-        
+
         return { 'retval' : retval, 'name' : name, 'args' : args }
 
     def get_capi_proto(self, defined_structs = [], prefix = None):
         """ Return the prototype of the C API function. """
         parts = self.get_capi_parts(defined_structs, prefix)
-        result = parts['retval']+' '+parts['name']+ \
+        return parts['retval']+' '+parts['name']+ \
                  '('+string.join(parts['args'], ', ')+')'
-        return result
                
     def get_cpp_parts(self, isimpl = False):
         """ Return the parts of the C++ function definition. """
         retval = str(self.retval)
         name = self.name
-        
+
         args = []
         if len(self.arguments) > 0:
-            for cls in self.arguments:
-                args.append(str(cls))
-                
+            args.extend(str(cls) for cls in self.arguments)
         if isimpl and isinstance(self, obj_function_virtual):
             # enumeration return values must be qualified with the class name
             # if the type is defined in the class declaration scope.
             type = self.get_retval().get_type()
             if type.is_result_struct() and type.is_result_struct_enum() and \
                 self.parent.has_typedef_alias(retval):
-                retval = self.parent.get_name()+'::'+retval
-        
+                retval = f'{self.parent.get_name()}::{retval}'
+
         return { 'retval' : retval, 'name' : name, 'args' : args }
         
     def get_cpp_proto(self, classname = None):
         """ Return the prototype of the C++ function. """
         parts = self.get_cpp_parts()
         result = parts['retval']+' '
-        if not classname is None:
-            result += classname+'::'
+        if classname is not None:
+            result += f'{classname}::'
         result += parts['name']+'('+string.join(parts['args'], ', ')+')'
         if isinstance(self, obj_function_virtual) and self.is_const():
             result += ' const'
@@ -1091,15 +1044,15 @@ class obj_function:
             # this function is global
             this_is_library_side = True
             header = self.parent
-        
+
         if other_class_name == 'CefBase':
             other_is_library_side = False
         else:
             other_class = header.get_class(other_class_name)
             if other_class is None:
-                raise Exception('Unknown class: '+other_class_name)
+                raise Exception(f'Unknown class: {other_class_name}')
             other_is_library_side = other_class.is_library_side()
-        
+
         return other_is_library_side == this_is_library_side
 
 
@@ -1113,7 +1066,7 @@ class obj_function_static(obj_function):
                               argval, comment)
 
     def __repr__(self):
-        return 'static '+obj_function.__repr__(self)+';'
+        return f'static {obj_function.__repr__(self)};'
 
     def get_capi_name(self, prefix = None):
         """ Return the CAPI function name. """
@@ -1130,13 +1083,10 @@ class obj_function_virtual(obj_function):
             raise Exception('Invalid parent object type')
         obj_function.__init__(self, parent, parent.filename, attrib, retval,
                               argval, comment)
-        if vfmod == 'const':
-            self.isconst = True
-        else:
-            self.isconst = False
+        self.isconst = vfmod == 'const'
     
     def __repr__(self):
-        return 'virtual '+obj_function.__repr__(self)+';'
+        return f'virtual {obj_function.__repr__(self)};'
     
     def is_const(self):
         """ Returns true if the method declaration is const. """
@@ -1163,7 +1113,7 @@ class obj_argument:
         elif self.type.is_byaddr():
             result += '*'
         if self.type.has_name():
-            result += ' '+self.type.get_name()
+            result += f' {self.type.get_name()}'
         return result
     
     def get_name(self):
@@ -1185,7 +1135,7 @@ class obj_argument:
     def get_types(self, list):
         """ Return a dictionary mapping data types to analyzed values. """
         name = self.type.get_type()
-        if not name in list:
+        if name not in list:
             list[name] = self.type
     
     def needs_attrib_count_func(self):
@@ -1230,20 +1180,18 @@ class obj_argument:
         """ Returns the argument type as defined in translator.README.txt. """
         if not self.type.has_name():
             raise Exception('Cannot be called for retval types')
-        
+
         # simple or enumeration type
         if (self.type.is_result_simple() and \
                 self.type.get_type() != 'bool') or \
            (self.type.is_result_struct() and \
                 self.type.is_result_struct_enum()):
             if self.type.is_byref():
-                if self.type.is_const():
-                    return 'simple_byref_const'
-                return 'simple_byref'
+                return 'simple_byref_const' if self.type.is_const() else 'simple_byref'
             elif self.type.is_byaddr():
                 return 'simple_byaddr'
             return 'simple_byval'
-        
+
         # boolean type
         if self.type.get_type() == 'bool':
             if self.type.is_byref():
@@ -1251,54 +1199,46 @@ class obj_argument:
             elif self.type.is_byaddr():
                 return 'bool_byaddr'
             return 'bool_byval'
-        
+
         # structure type
         if self.type.is_result_struct() and self.type.is_byref():
-            if self.type.is_const():
-                return 'struct_byref_const'
-            return 'struct_byref'
-        
+            return 'struct_byref_const' if self.type.is_const() else 'struct_byref'
         # string type
         if self.type.is_result_string() and self.type.is_byref():
-            if self.type.is_const():
-                return 'string_byref_const'
-            return 'string_byref'
-            
+            return 'string_byref_const' if self.type.is_const() else 'string_byref'
         # refptr type
         if self.type.is_result_refptr():
             same_side = self.parent.is_same_side(self.type.get_refptr_type())
             if self.type.is_byref():
-                if same_side:
-                    return 'refptr_same_byref'
-                return 'refptr_diff_byref'
+                return 'refptr_same_byref' if same_side else 'refptr_diff_byref'
             if same_side:
                 return 'refptr_same'
             return 'refptr_diff'
-        
-        
+
+
         if self.type.is_result_vector():
             # all vector types must be passed by reference
             if not self.type.is_byref():
                 return 'invalid'
-        
+
             if self.type.is_result_vector_string():
                 # string vector type
                 if self.type.is_const():
                     return 'string_vec_byref_const'
                 return 'string_vec_byref'
-            
+
             if self.type.is_result_vector_simple():
                 if self.type.get_vector_type() != 'bool':
                     # simple/enumeration vector types
                     if self.type.is_const():
                         return 'simple_vec_byref_const'
                     return 'simple_vec_byref'
-                
+
                 # boolean vector types
                 if self.type.is_const():
                     return 'bool_vec_byref_const'
                 return 'bool_vec_byref'
-            
+
             if self.type.is_result_vector_refptr():
                 # refptr vector types
                 same_side = self.parent.is_same_side(self.type.get_refptr_type())
@@ -1309,8 +1249,8 @@ class obj_argument:
                 if same_side:
                     return 'refptr_vec_same_byref'
                 return 'refptr_vec_diff_byref'
-          
-        
+
+
         # string single map type
         if self.type.is_result_map_single():
             if not self.type.is_byref():
@@ -1318,7 +1258,7 @@ class obj_argument:
             if self.type.is_const():
                 return 'string_map_single_byref_const'
             return 'string_map_single_byref'
-        
+
         # string multi map type
         if self.type.is_result_map_multi():
             if not self.type.is_byref():
@@ -1326,7 +1266,7 @@ class obj_argument:
             if self.type.is_const():
                 return 'string_map_multi_byref_const'
             return 'string_map_multi_byref'
-        
+
         return 'invalid'
 
     def get_retval_type(self):
@@ -1366,7 +1306,7 @@ class obj_argument:
         """ Returns the default return value based on the retval type. """
         # start with the default retval attribute, if any.
         retval = self.get_attrib_default_retval()
-        if not retval is None:
+        if retval is not None:
             if for_capi:
                 # apply any appropriate C API translations.
                 if retval == 'true':
@@ -1374,22 +1314,20 @@ class obj_argument:
                 if retval == 'false':
                     return '0'
             return retval
-        
+
         # next look at the retval type value.
         type = self.get_retval_type()
         if type == 'simple':
             return self.get_type().get_result_simple_default()
         elif type == 'bool':
-            if for_capi:
-                return '0'
-            return 'false'
+            return '0' if for_capi else 'false'
         elif type == 'string':
             if for_capi:
                 return 'NULL'
             return 'CefString()'
-        elif type == 'refptr_same' or type == 'refptr_diff':
+        elif type in ['refptr_same', 'refptr_diff']:
             return 'NULL'
-        
+
         return ''
     
 class obj_analysis:
@@ -1401,51 +1339,51 @@ class obj_analysis:
         self.result_value = None
         self.result_default = None
         self.refptr_type = None
-        
+
         # parse the argument string
         partlist = string.split(string.strip(value))
-        
+
         if named == True:
             # extract the name value
             self.name = partlist[-1]
             del partlist[-1]
         else:
             self.name = None
-            
+
         if len(partlist) == 0:
-            raise Exception('Invalid argument value: '+value)
-        
+            raise Exception(f'Invalid argument value: {value}')
+
         # check const status
         if partlist[0] == 'const':
             self.isconst = True
             del partlist[0]
         else:
             self.isconst = False
-            
+
         # combine the data type
         self.type = string.join(partlist, ' ')
-            
+
         # extract the last character of the data type
         endchar = self.type[-1]
-        
+
         # check if the value is passed by reference
         if endchar == '&':
             self.isbyref = True
             self.type = self.type[:-1]
         else:
             self.isbyref = False
-        
+
         # check if the value is passed by address
         if endchar == '*':
             self.isbyaddr = True
             self.type = self.type[:-1]
         else:
             self.isbyaddr = False
-        
+
         # see if the value is directly identifiable
         if self._check_advanced(self.type) == True:
             return
-        
+
         # not identifiable, so look it up
         translation = None
         for scope in scopelist:
@@ -1453,12 +1391,12 @@ class obj_analysis:
                 and not isinstance(scope, obj_class):
                 raise Exception('Invalid scope object type')
             translation = scope.get_alias_translation(self.type)
-            if not translation is None:
+            if translation is not None:
                 break
-            
+
         if translation is None:
-            raise Exception('Failed to translate type: '+self.type)
-        
+            raise Exception(f'Failed to translate type: {self.type}')
+
         # the translation succeeded so keep the result
         self.result_type = translation.result_type
         self.result_value = translation.result_value
@@ -1473,7 +1411,7 @@ class obj_analysis:
             ]
             self.result_value[0]['vector_type'] = val
             return True
-            
+
         # check for maps
         if value.find('std::map') == 0:
             self.result_type = 'map'
@@ -1495,10 +1433,10 @@ class obj_analysis:
                     self._get_basic(string.strip(vals[1]))
                 ]
                 return True
-        
+
         # check for basic types
         basic = self._get_basic(value)
-        if not basic is None:
+        if basic is not None:
             self.result_type = basic['result_type']
             self.result_value = basic['result_value']
             if 'refptr_type' in basic:
@@ -1506,7 +1444,7 @@ class obj_analysis:
             if 'result_default' in basic:
                 self.result_default = basic['result_default']
             return True
-        
+
         return False
         
     def _get_basic(self, value):
@@ -1516,7 +1454,7 @@ class obj_analysis:
                 'result_type' : 'string',
                 'result_value' : None
             }
-        
+
         # check for simple direct translations
         if value in _simpletypes.keys():
             return {
@@ -1524,39 +1462,40 @@ class obj_analysis:
                 'result_value' : _simpletypes[value][0],
                 'result_default' : _simpletypes[value][1],
             }
-        
+
         # check if already a C API structure
         if value[-2:] == '_t':
             return {
                 'result_type' : 'structure',
                 'result_value' : value
             }
-        
+
         # check for CEF reference pointers
         p = re.compile('^CefRefPtr<(.*?)>$', re.DOTALL)
         list = p.findall(value)
         if len(list) == 1:
             return {
-                'result_type' : 'refptr',
-                'result_value' : get_capi_name(list[0], True)+'*',
-                'refptr_type' : list[0]
+                'result_type': 'refptr',
+                'result_value': f'{get_capi_name(list[0], True)}*',
+                'refptr_type': list[0],
             }
 
+
         # check for CEF structure types
-        if value[0:3] == 'Cef' and value[-4:] != 'List':
+        if value[:3] == 'Cef' and value[-4:] != 'List':
             return {
                 'result_type' : 'structure',
                 'result_value' : get_capi_name(value, True)
             }
-        
+
         return None
         
     def __repr__(self):
-        return '('+self.result_type+') '+str(self.result_value)
+        return f'({self.result_type}) {str(self.result_value)}'
     
     def has_name(self):
         """ Returns true if a name value exists. """
-        return (not self.name is None)
+        return self.name is not None
     
     def get_name(self):
         """ Return the name. """
@@ -1629,7 +1568,7 @@ class obj_analysis:
     def get_result_refptr_type(self, defined_structs = []):
         """ Return the refptr type. """
         result = ''
-        if not self.result_value[:-1] in defined_structs:
+        if self.result_value[:-1] not in defined_structs:
             result += 'struct _'
         result += self.result_value
         if self.is_byref() or self.is_byaddr():
@@ -1644,9 +1583,7 @@ class obj_analysis:
         """ Returns true if this struct type is likely an enumeration. """
         # structure values that are passed by reference or address must be
         # structures and not enumerations
-        if not self.is_byref() and not self.is_byaddr():
-            return True
-        return False
+        return not self.is_byref() and not self.is_byaddr()
     
     def get_result_struct_type(self, defined_structs = []):
         """ Return the structure or enumeration type. """
@@ -1655,7 +1592,7 @@ class obj_analysis:
         if not is_enum:
             if self.is_const():
                 result += 'const '
-            if not self.result_value in defined_structs:
+            if self.result_value not in defined_structs:
                 result += 'struct _'
         else:
             result += 'enum '

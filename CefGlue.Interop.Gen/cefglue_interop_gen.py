@@ -12,7 +12,7 @@ from optparse import OptionParser
 if __name__ != "__main__":
     sys.stderr.write('This file cannot be loaded as a module!')
     sys.exit()
-    
+
 
 # parse command-line options
 disc = """
@@ -43,25 +43,25 @@ if options.cppheaderdir is None or options.schema is None or options.cefgluedir 
 
 # make sure the header exists
 if not path_exists(options.cppheaderdir):
-    sys.stderr.write('File '+options.cppheaderdir+' does not exist.')
+    sys.stderr.write(f'File {options.cppheaderdir} does not exist.')
     sys.exit()
 
 # create the header object
 if not options.quiet:
-    sys.stdout.write('Parsing C++ headers from '+options.cppheaderdir+'...\n')
+    sys.stdout.write(f'Parsing C++ headers from {options.cppheaderdir}' + '...\n')
 header = obj_header()
 excluded_files = ['cef_application_mac.h', 'cef_version.h']
 header.add_directory(options.cppheaderdir, excluded_files)
 
 writect = 0
 
-if not options.cefgluedir is None:
+if options.cefgluedir is not None:
     # output cefglue interop
     if not options.quiet:
         sys.stdout.write('Generating CefGlue interop files...\n')
     writect += write_interop(header, options.cefgluedir, not options.nobackup, options.schema, options.cppheaderdir)
 
 if not options.quiet:
-    sys.stdout.write('Done - Wrote '+str(writect)+' files.\n')
+    sys.stdout.write(f'Done - Wrote {writect}' + ' files.\n')
 
 

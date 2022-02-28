@@ -13,11 +13,11 @@ ROLE_PROXY = 2
 # common settings
 #
 namespace = "Xilium.CefGlue"
-interop_namespace = namespace + ".Interop"
+interop_namespace = f'{namespace}.Interop'
 nm_class = "libcef"
-CEF_ALIGN = nm_class + ".ALIGN"
-CEF_CALL = nm_class + ".CEF_CALL"
-CEF_CALLBACK = nm_class + ".CEF_CALLBACK"
+CEF_ALIGN = f'{nm_class}.ALIGN'
+CEF_CALL = f'{nm_class}.CEF_CALL'
+CEF_CALLBACK = f'{nm_class}.CEF_CALLBACK'
 
 struct_path = 'Interop/Classes.g'
 libcef_path = 'Interop/'
@@ -94,7 +94,6 @@ c2cs_enumtypes = {
     'cef_value_type_t': 'CefValueType',
     'cef_xml_encoding_type_t': 'CefXmlEncoding',
     'cef_xml_node_type_t': 'CefXmlNodeType',
-    'cef_event_flags_t': 'CefEventFlags',
     'cef_context_menu_type_flags_t': 'CefContextMenuTypeFlags',
     'cef_context_menu_media_type_t': 'CefContextMenuMediaType',
     'cef_context_menu_media_state_flags_t': 'CefContextMenuMediaStateFlags',
@@ -118,8 +117,9 @@ c2cs_enumtypes = {
     'cef_paint_element_type_t': 'CefPaintElementType',
     'cef_drag_operations_mask_t': 'CefDragOperationsMask',
     'cef_resource_type_t': 'CefResourceType',
-    'cef_transition_type_t': 'CefTransitionType'
-    }
+    'cef_transition_type_t': 'CefTransitionType',
+}
+
 
 c2cs_structtypes = { }
 
@@ -171,9 +171,7 @@ def get_platform_retval_postfixs(csntype):
     return ['']
 
 def quote_name(name):
-    if name in cs_keywords:
-        return '@' + name
-    return name
+    return f'@{name}' if name in cs_keywords else name
 
 def c2cs_type(ctype):
     warn_ctype = ctype
@@ -236,14 +234,11 @@ def get_iname(cls):
     return cls.get_capi_name()
 
 def cpp2csname(cppname):
-    if classdef.has_key(cppname):
-        if classdef[cppname].has_key('name'):
-            return classdef[cppname]['name']
+    if classdef.has_key(cppname) and classdef[cppname].has_key('name'):
+        return classdef[cppname]['name']
     return cppname
 
 def get_overview(cls):
-    result = []
-
     # result.append('CEF name (C++): %s' % cls.get_name())
 
     role = "Role: "
@@ -253,6 +248,4 @@ def get_overview(cls):
         role += "+"
     if is_handler(cls):
         role += "HANDLER"
-    result.append(role)
-
-    return result
+    return [role]
